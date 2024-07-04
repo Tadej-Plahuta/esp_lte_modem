@@ -43,8 +43,6 @@ typedef struct
 
 #define MODEM_DEBUG_OUTPUT 1
 
-extern APN_settings_struct TAB_NVS_APN_settings;
-
 /**
  * @brief Macro defined for error checking
  *
@@ -599,26 +597,8 @@ esp_err_t esp_modem_start_ppp(modem_dte_t *dte)
     MODEM_CHECK(dce, "DTE has not yet bind with DCE", err);
     esp_modem_dte_t *esp_dte = __containerof(dte, esp_modem_dte_t, parent);
     /* Set PDP Context */
-
-    ESP_LOGW("AT TESTING APN", "Setting APN name ...");
-    MODEM_CHECK(dce->define_pdp_context(dce, 1, "IP", TAB_NVS_APN_settings.APN) == ESP_OK, "set MODEM APN failed", err); // CONFIG_EXAMPLE_COMPONENT_MODEM_APN
-
-    if(strncmp(TAB_NVS_APN_settings.username, " ", 1) != 0 && strncmp(TAB_NVS_APN_settings.pasword, " ", 1) != 0)
-    {
-        ESP_LOGW("AT TESTING APN", "Setting APN username and password != 0 ...");
-        MODEM_CHECK(dce->set_pdp_authentication_type(dce, 1, 1, TAB_NVS_APN_settings.username, TAB_NVS_APN_settings.pasword) == ESP_OK, "set MODEM APN username and password failed", err);
-    }
-    else if(strncmp(TAB_NVS_APN_settings.username, " ", 1) != 0 || strncmp(TAB_NVS_APN_settings.pasword, " ", 1) != 0)
-    {
-        ESP_LOGW("AT TESTING APN", "Setting APN username or password != 0 ...");
-        MODEM_CHECK(dce->set_pdp_authentication_type(dce, 1, 3, TAB_NVS_APN_settings.username, TAB_NVS_APN_settings.pasword) == ESP_OK, "set MODEM APN username or password failed", err);
-    }
-    else
-    {
-        ESP_LOGW("AT TESTING APN", "Setting APN username and password == 0 ...");
-        MODEM_CHECK(dce->set_pdp_authentication_type(dce, 1, 0, TAB_NVS_APN_settings.username, TAB_NVS_APN_settings.pasword) == ESP_OK, "set MODEM APN username and password to none failed", err);
-    }
-
+    ESP_LOGI(MODEM_TAG, "APN: %s", CONFIG_EXAMPLE_MODEM_PPP_AUTH_USERNAME);
+    MODEM_CHECK(dce->define_pdp_context(dce, 1, "IP", CONFIG_EXAMPLE_MODEM_PPP_AUTH_USERNAME) == ESP_OK, "set MODEM APN failed", err);
     /* Enter PPP mode */
     MODEM_CHECK(dte->change_mode(dte, MODEM_PPP_MODE) == ESP_OK, "enter ppp mode failed", err);
 
@@ -628,6 +608,7 @@ esp_err_t esp_modem_start_ppp(modem_dte_t *dte)
 err:
     return ESP_FAIL;
 }
+
 
 esp_err_t esp_modem_stop_ppp(modem_dte_t *dte)
 {

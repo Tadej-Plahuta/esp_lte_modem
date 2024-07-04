@@ -26,6 +26,7 @@ static EventGroupHandle_t event_group = NULL;
 static const int CONNECT_BIT = BIT0;
 static const int STOP_BIT = BIT1;
 static const int GOT_DATA_BIT = BIT2;
+bool SIM_DETECT_FLAG;
 
 #if CONFIG_EXAMPLE_SEND_MSG
 /**
@@ -276,7 +277,7 @@ void app_main(void)
     assert(dce != NULL);
     
     /* Enable CMUX */
-    esp_modem_start_cmux(dte);
+    // esp_modem_start_cmux(dte);
     
         ESP_ERROR_CHECK(dce->set_flow_ctrl(dce, MODEM_FLOW_CONTROL_NONE));
         ESP_ERROR_CHECK(dce->store_profile(dce));
