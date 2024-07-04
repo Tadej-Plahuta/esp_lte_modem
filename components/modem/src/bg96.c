@@ -16,15 +16,12 @@
 #include "esp_log.h"
 #include "bg96.h"
 #include "bg96_private.h"
-#include "sdkconfig.h"
 
 #define MODEM_RESULT_CODE_POWERDOWN "POWERED DOWN"
 
-#ifdef CONFIG_COMPONENT_MODEM_PIN
-    #define MODEM_AT_CPIN  "AT+CPIN=" CONFIG_COMPONENT_MODEM_PIN "\r"
-#endif 
-
 static const char *DCE_TAG = "bg96";
+
+extern bool SIM_DETECT_FLAG;
 
 /**
  * @brief Handle response from AT+CSQ
@@ -42,6 +39,28 @@ static esp_err_t bg96_handle_csq(modem_dce_t *dce, const char *line)
         uint32_t **csq = bg96_dce->priv_resource;
         /* +CSQ: <rssi>,<ber> */
         sscanf(line, "%*s%d,%d", csq[0], csq[1]);
+        err = ESP_OK;
+    }
+    return err;
+}
+
+//<GNRS>
+/**
+ * @brief Handle response from AT+CGREG
+ */
+static esp_err_t bg96_handle_cgreg(modem_dce_t *dce, const char *line)
+{
+    esp_err_t err = ESP_FAIL;
+    bg96_modem_dce_t *bg96_dce = __containerof(dce, bg96_modem_dce_t, parent);
+    if (strstr(line, MODEM_RESULT_CODE_SUCCESS)) {
+        err = esp_modem_process_command_done(dce, MODEM_STATE_SUCCESS);
+    } else if (strstr(line, MODEM_RESULT_CODE_ERROR)) {
+        err = esp_modem_process_command_done(dce, MODEM_STATE_FAIL);
+    } else if (!strncmp(line, "+CGREG", strlen("+CGREG"))) {
+        /* store value of n and stat */
+        uint32_t **cgreg = bg96_dce->priv_resource;
+        /* +CGREG: <n>,<stat> */
+        sscanf(line, "%*s%d,%d", cgreg[0], cgreg[1]);
         err = ESP_OK;
     }
     return err;
@@ -89,7 +108,6 @@ static esp_err_t bg96_handle_exit_data_mode(modem_dce_t *dce, const char *line)
  */
 static esp_err_t bg96_handle_atd_ppp(modem_dce_t *dce, const char *line)
 {
-    ESP_LOGI("DCE_TAG", "ATD response: %s", line);
     esp_err_t err = ESP_FAIL;
     if (strstr(line, MODEM_RESULT_CODE_CONNECT)) {
         err = esp_modem_process_command_done(dce, MODEM_STATE_SUCCESS);
@@ -141,6 +159,28 @@ static esp_err_t bg96_handle_cgsn(modem_dce_t *dce, const char *line)
     return err;
 }
 
+//<ICCID>
+/**
+ * @brief Handle response from AT+ICCID
+ */
+static esp_err_t bg96_handle_iccid(modem_dce_t *dce, const char *line)
+{
+    esp_err_t err = ESP_FAIL;
+    if (strstr(line, MODEM_RESULT_CODE_SUCCESS)) {
+        err = esp_modem_process_command_done(dce, MODEM_STATE_SUCCESS);
+    } else if (strstr(line, MODEM_RESULT_CODE_ERROR)) {
+        err = esp_modem_process_command_done(dce, MODEM_STATE_FAIL);
+    } else {
+        int len = snprintf(dce->iccid, MODEM_ICCID_LENGTH + 1, "%s", ((strchr(line, ':'))+2));
+        if (len > 2) {
+            /* Strip "\r\n" */
+            strip_cr_lf_tail(dce->iccid, len);
+            err = ESP_OK;
+        }
+    }
+    return err;
+}
+
 /**
  * @brief Handle response from AT+CIMI
  */
@@ -178,9 +218,9 @@ static esp_err_t bg96_handle_cops(modem_dce_t *dce, const char *line)
         size_t len = strlen(line);
         char *line_copy = malloc(len + 1);
         strcpy(line_copy, line);
-        /* +COPS: <mode>[, <format>[, <oper>]] */
+        /* +COPS: <mode>[, <format>[, <oper>[, <Act>]]] */
         char *str_ptr = NULL;
-        char *p[3];
+        char *p[5];
         uint8_t i = 0;
         /* strtok will broke string by replacing delimiter with '\0' */
         p[i] = strtok_r(line_copy, ",", &str_ptr);
@@ -194,6 +234,9 @@ static esp_err_t bg96_handle_cops(modem_dce_t *dce, const char *line)
                 strip_cr_lf_tail(dce->oper, len);
                 err = ESP_OK;
             }
+        }
+        if (i >= 4) {
+            dce->act = (uint8_t)strtol(p[3], NULL, 0);
         }
         free(line_copy);
     }
@@ -239,6 +282,32 @@ err:
     return ESP_FAIL;
 }
 
+//<GNRS>
+/**
+ * @brief Get network registration status
+ *
+ * @param dce Modem DCE object
+ * @param n GPRS network registration indication
+ * @param stat network registration indication
+ * @return esp_err_t
+ *      - ESP_OK on success
+ *      - ESP_FAIL on error
+ */
+static esp_err_t bg96_get_network_registration_status(modem_dce_t *dce, uint32_t *n, uint32_t *stat)
+{
+    modem_dte_t *dte = dce->dte;
+    bg96_modem_dce_t *bg96_dce = __containerof(dce, bg96_modem_dce_t, parent);
+    uint32_t *resource[2] = {n, stat};
+    bg96_dce->priv_resource = resource;
+    dce->handle_line = bg96_handle_cgreg;
+    DCE_CHECK(dte->send_cmd(dte, "AT+CGREG?\r", MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err);
+    DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "inquire network registration status failed", err);
+    ESP_LOGD(DCE_TAG, "inquire network registration status ok");
+    return ESP_OK;
+err:
+    return ESP_FAIL;
+}
+
 /**
  * @brief Get battery status
  *
@@ -266,21 +335,6 @@ err:
 }
 
 /**
-+ * @brief Handle response from AT+CMUX=0
-+ */
-static esp_err_t bg96_handle_at_cmux(modem_dce_t *dce, const char *line)
-{
-    esp_err_t err = ESP_FAIL;
-    if (strstr(line, MODEM_RESULT_CODE_SUCCESS)) {
-        ESP_LOGI(DCE_TAG, "CMUX command success");
-        err = esp_modem_process_command_done(dce, MODEM_STATE_SUCCESS);
-    } else if (strstr(line, MODEM_RESULT_CODE_ERROR)) {
-        err = esp_modem_process_command_done(dce, MODEM_STATE_FAIL);
-    }
-    return err;
-}
-
-/**
  * @brief Set Working Mode
  *
  * @param dce Modem DCE object
@@ -294,25 +348,36 @@ static esp_err_t bg96_set_working_mode(modem_dce_t *dce, modem_mode_t mode)
     modem_dte_t *dte = dce->dte;
     switch (mode) {
     case MODEM_COMMAND_MODE:
+        vTaskDelay(pdMS_TO_TICKS(1000)); // spec: 1s delay for the modem to recognize the escape sequence
         dce->handle_line = bg96_handle_exit_data_mode;
-        DCE_CHECK(dte->send_cmd(dte, "+++", MODEM_COMMAND_TIMEOUT_MODE_CHANGE) == ESP_OK, "send command failed", err);
-        DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "enter command mode failed", err);
+        if (dte->send_cmd(dte, "+++", MODEM_COMMAND_TIMEOUT_MODE_CHANGE) != ESP_OK) {
+            // "+++" Could fail if we are already in the command mode.
+            // in that case we ignore the timeout and re-sync the modem
+            ESP_LOGI(DCE_TAG, "Sending \"+++\" command failed");
+            dce->handle_line = esp_modem_dce_handle_response_default;
+            DCE_CHECK(dte->send_cmd(dte, "AT\r", MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err);
+            DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "sync failed", err);
+        } else {
+            DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "enter command mode failed", err);
+            vTaskDelay(pdMS_TO_TICKS(1000)); // spec: 1s delay after `+++` command
+        }
         ESP_LOGD(DCE_TAG, "enter command mode ok");
         dce->mode = MODEM_COMMAND_MODE;
         break;
     case MODEM_PPP_MODE:
         dce->handle_line = bg96_handle_atd_ppp;
         DCE_CHECK(dte->send_cmd(dte, "ATD*99***1#\r", MODEM_COMMAND_TIMEOUT_MODE_CHANGE) == ESP_OK, "send command failed", err);
-        DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "enter ppp mode failed", err);
+        if (dce->state != MODEM_STATE_SUCCESS) {
+            // Initiate PPP mode could fail, if we've already "dialed" the data call before.
+            // in that case we retry with "ATO" to just resume the data mode
+            ESP_LOGD(DCE_TAG, "enter ppp mode failed, retry with ATO");
+            dce->handle_line = bg96_handle_atd_ppp;
+            DCE_CHECK(dte->send_cmd(dte, "ATO\r", MODEM_COMMAND_TIMEOUT_MODE_CHANGE) == ESP_OK, "send command failed", err);
+            DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "enter ppp mode failed", err);
+            // vTaskDelay(pdMS_TO_TICKS(1000)); // spec: 1s delay after `ATO` command
+        }
         ESP_LOGD(DCE_TAG, "enter ppp mode ok");
         dce->mode = MODEM_PPP_MODE;
-        break;
-    case MODEM_CMUX_MODE:
-        dce->handle_line = bg96_handle_at_cmux;
-        DCE_CHECK(dte->send_cmd(dte, "AT+CMUX=0\r", MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err);
-        DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "enter CMUX mode failed", err);
-        ESP_LOGI(DCE_TAG, "enter CMUX mode ok");
-        dce->mode = MODEM_CMUX_MODE;
         break;
     default:
         ESP_LOGW(DCE_TAG, "unsupported working mode: %d", mode);
@@ -384,6 +449,30 @@ err:
     return ESP_FAIL;
 }
 
+//<ICCID>
+/**
+ * @brief Get DCE module ICCID number
+ *
+ * @param bg96_dce bg96 object
+ * @return esp_err_t
+ *      - ESP_OK on success
+ *      - ESP_FAIL on error
+ */
+static esp_err_t bg96_get_iccid_number(bg96_modem_dce_t *bg96_dce)
+{
+    modem_dte_t *dte = bg96_dce->parent.dte;
+    bg96_dce->parent.handle_line = bg96_handle_iccid;
+    DCE_CHECK(dte->send_cmd(dte, "AT+CICCID\r", MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err);
+    DCE_CHECK(bg96_dce->parent.state == MODEM_STATE_SUCCESS, "get iccid number failed", err);
+    ESP_LOGD(DCE_TAG, "get iccid number ok");
+    SIM_DETECT_FLAG = true;
+    return ESP_OK;
+err:
+    ESP_LOGE(DCE_TAG, "ERROR: SIM CARD NOT INSERTED!");
+    SIM_DETECT_FLAG = false;
+    return ESP_FAIL;
+}
+
 /**
  * @brief Get DCE module IMSI number
  *
@@ -404,19 +493,18 @@ err:
     return ESP_FAIL;
 }
 
-
-
 /**
  * @brief Get Operator's name
  *
- * @param bg96_dce bg96 object
+ * @param dce Modem DCE object
  * @return esp_err_t
  *      - ESP_OK on success
  *      - ESP_FAIL on error
  */
-static esp_err_t bg96_get_operator_name(bg96_modem_dce_t *bg96_dce)
+static esp_err_t bg96_get_operator_name(modem_dce_t *dce)
 {
-    modem_dte_t *dte = bg96_dce->parent.dte;
+    modem_dte_t *dte = dce->dte;
+    bg96_modem_dce_t *bg96_dce = __containerof(dce, bg96_modem_dce_t, parent);
     bg96_dce->parent.handle_line = bg96_handle_cops;
     DCE_CHECK(dte->send_cmd(dte, "AT+COPS?\r", MODEM_COMMAND_TIMEOUT_OPERATOR) == ESP_OK, "send command failed", err);
     DCE_CHECK(bg96_dce->parent.state == MODEM_STATE_SUCCESS, "get network operator failed", err);
@@ -444,73 +532,6 @@ static esp_err_t bg96_deinit(modem_dce_t *dce)
     return ESP_OK;
 }
 
-#ifdef MODEM_AT_CPIN
-/**
- * @brief Handle response from AT+CPIN=XXXX
- */
-static esp_err_t bg96_handle_pin(modem_dce_t *dce, const char *line)
-{
-    esp_err_t err = ESP_FAIL;
-    if (strstr(line, MODEM_RESULT_CODE_SUCCESS)) {
-        err = esp_modem_process_command_done(dce, MODEM_STATE_SUCCESS);
-    } 
-    return err;
-}
-#endif
-
-/**
- * @brief Handle response from AT+CPIN?
- */
-static esp_err_t bg96_handle_ask_pin(modem_dce_t *dce, const char *line)
-{
-    esp_err_t err = ESP_OK;
-    ESP_LOGI(DCE_TAG, "PIN ASK response: %s", line);
-    if (!strncmp(line, "+CPIN: SIM PIN", strlen("+CPIN: SIM PIN"))) {
-        ESP_LOGI(DCE_TAG, "SIM needs PIN");
-        dce->needpin = true;
-    }
-        if (strstr(line, MODEM_RESULT_CODE_SUCCESS)) {
-        err = esp_modem_process_command_done(dce, MODEM_STATE_SUCCESS);
-    } 
-    return err;
-}
-
-
-/**
- * @brief Set PIN
- *
- * @param bg96_dce bg96 object
- * @return esp_err_t
- *      - ESP_OK on success
- *      - ESP_FAIL on error
- */
-static esp_err_t bg96_ask_pin(bg96_modem_dce_t *bg96_dce)
-{
-    modem_dte_t *dte = bg96_dce->parent.dte;
-    bg96_dce->parent.handle_line = bg96_handle_ask_pin;
-    DCE_CHECK(dte->send_cmd(dte, "AT+CPIN?\r", MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send CPIN command failed", err);
-    if (bg96_dce->parent.needpin) {
-        #ifdef MODEM_AT_CPIN
-            ESP_LOGI(DCE_TAG, "submit PIN");
-            bg96_dce->parent.handle_line = bg96_handle_pin;
-            DCE_CHECK(dte->send_cmd(dte, MODEM_AT_CPIN, MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send CPIN command failed", err);
-            DCE_CHECK(bg96_dce->parent.state == MODEM_STATE_SUCCESS, "set PIN failed", err);
-            ESP_LOGI(DCE_TAG, "set PIN ok");
-            bg96_dce->parent.needpin = false;
-            vTaskDelay(1000 / portTICK_PERIOD_MS); /* Wait a sec */
-            return ESP_OK;
-        #else
-            ESP_LOGW(DCE_TAG, "PIN has been requested by DCE, but COMPONENT_MODEM_PIN is not set.");
-            bg96_dce->parent.state = MODEM_STATE_FAIL;
-            return ESP_FAIL;
-        #endif
-    }
-    DCE_CHECK(bg96_dce->parent.state == MODEM_STATE_SUCCESS, "set PIN failed", err);
-    return ESP_OK;
-err:
-    return ESP_FAIL;
-}
-
 modem_dce_t *bg96_init(modem_dte_t *dte)
 {
     DCE_CHECK(dte, "DCE should bind with a DTE", err);
@@ -527,38 +548,29 @@ modem_dce_t *bg96_init(modem_dte_t *dte)
     bg96_dce->parent.store_profile = esp_modem_dce_store_profile;
     bg96_dce->parent.set_flow_ctrl = esp_modem_dce_set_flow_ctrl;
     bg96_dce->parent.define_pdp_context = esp_modem_dce_define_pdp_context;
+    bg96_dce->parent.set_pdp_authentication_type = esp_modem_dce_set_pdp_authentication_type;
     bg96_dce->parent.hang_up = esp_modem_dce_hang_up;
     bg96_dce->parent.get_signal_quality = bg96_get_signal_quality;
+    bg96_dce->parent.get_network_registration_status = bg96_get_network_registration_status;  //<GNRS>
     bg96_dce->parent.get_battery_status = bg96_get_battery_status;
+    bg96_dce->parent.get_operator_name = bg96_get_operator_name;
     bg96_dce->parent.set_working_mode = bg96_set_working_mode;
-//    esp_dte->parent.change_mode = esp_modem_dte_change_mode;
     bg96_dce->parent.power_down = bg96_power_down;
-    bg96_dce->parent.needpin = false;
     bg96_dce->parent.deinit = bg96_deinit;
     /* Sync between DTE and DCE */
     DCE_CHECK(esp_modem_dce_sync(&(bg96_dce->parent)) == ESP_OK, "sync failed", err_io);
-
-    /* CMUX */
-    if (bg96_dce->parent.dte->cmux) {
-        ESP_LOGI(DCE_TAG, "CMUX setup");
- //         esp_modem_start_cmux(dte); 
- //       DCE_CHECK(bg96_dce->parent.dte->change_mode(bg96_dce->parent.dte, 2) == ESP_OK, "CMUX failed", err_io);
-    }
-
     /* Close echo */
     DCE_CHECK(esp_modem_dce_echo(&(bg96_dce->parent), false) == ESP_OK, "close echo mode failed", err_io);
     /* Get Module name */
     DCE_CHECK(bg96_get_module_name(bg96_dce) == ESP_OK, "get module name failed", err_io);
-    /* Set PIN */
-    DCE_CHECK(bg96_ask_pin(bg96_dce) == ESP_OK, "set PIN failed", err_io); 
     /* Get IMEI number */
     DCE_CHECK(bg96_get_imei_number(bg96_dce) == ESP_OK, "get imei failed", err_io);
+    /* Get ICCID number */
+    DCE_CHECK(bg96_get_iccid_number(bg96_dce) == ESP_OK, "get iccid failed", err_io);   //<ICCID>
     /* Get IMSI number */
     DCE_CHECK(bg96_get_imsi_number(bg96_dce) == ESP_OK, "get imsi failed", err_io);
     /* Get operator name */
-    DCE_CHECK(bg96_get_operator_name(bg96_dce) == ESP_OK, "get operator name failed", err_io);
-
-
+    DCE_CHECK(bg96_get_operator_name(&(bg96_dce->parent)) == ESP_OK, "get operator name failed", err_io);
     return &(bg96_dce->parent);
 err_io:
     free(bg96_dce);

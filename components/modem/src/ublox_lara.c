@@ -15,7 +15,7 @@
 #include <string.h>
 #include "esp_log.h"
 #include "esp_modem_dce_service.h"
-#include "sim800.h"
+#include "ublox_lara.h"
 
 #define MODEM_RESULT_CODE_POWERDOWN "POWER DOWN"
 
@@ -23,7 +23,7 @@
  * @brief Macro defined for error checking
  *
  */
-static const char *DCE_TAG = "sim800";
+static const char *DCE_TAG = "ublox";
 #define DCE_CHECK(a, str, goto_tag, ...)                                              \
     do                                                                                \
     {                                                                                 \
@@ -35,28 +35,28 @@ static const char *DCE_TAG = "sim800";
     } while (0)
 
 /**
- * @brief SIM800 Modem
+ * @brief uBlox Lara R2 Modem
  *
  */
 typedef struct {
     void *priv_resource; /*!< Private resource */
     modem_dce_t parent;  /*!< DCE parent class */
-} sim800_modem_dce_t;
+} ublox_modem_dce_t;
 
 /**
  * @brief Handle response from AT+CSQ
  */
-static esp_err_t sim800_handle_csq(modem_dce_t *dce, const char *line)
+static esp_err_t ublox_handle_csq(modem_dce_t *dce, const char *line)
 {
     esp_err_t err = ESP_FAIL;
-    sim800_modem_dce_t *sim800_dce = __containerof(dce, sim800_modem_dce_t, parent);
+    ublox_modem_dce_t *ublox_dce = __containerof(dce, ublox_modem_dce_t, parent);
     if (strstr(line, MODEM_RESULT_CODE_SUCCESS)) {
         err = esp_modem_process_command_done(dce, MODEM_STATE_SUCCESS);
     } else if (strstr(line, MODEM_RESULT_CODE_ERROR)) {
         err = esp_modem_process_command_done(dce, MODEM_STATE_FAIL);
     } else if (!strncmp(line, "+CSQ", strlen("+CSQ"))) {
         /* store value of rssi and ber */
-        uint32_t **csq = sim800_dce->priv_resource;
+        uint32_t **csq = ublox_dce->priv_resource;
         /* +CSQ: <rssi>,<ber> */
         sscanf(line, "%*s%d,%d", csq[0], csq[1]);
         err = ESP_OK;
@@ -67,17 +67,17 @@ static esp_err_t sim800_handle_csq(modem_dce_t *dce, const char *line)
 /**
  * @brief Handle response from AT+CBC
  */
-static esp_err_t sim800_handle_cbc(modem_dce_t *dce, const char *line)
+static esp_err_t ublox_handle_cbc(modem_dce_t *dce, const char *line)
 {
     esp_err_t err = ESP_FAIL;
-    sim800_modem_dce_t *sim800_dce = __containerof(dce, sim800_modem_dce_t, parent);
+    ublox_modem_dce_t *ublox_dce = __containerof(dce, ublox_modem_dce_t, parent);
     if (strstr(line, MODEM_RESULT_CODE_SUCCESS)) {
         err = esp_modem_process_command_done(dce, MODEM_STATE_SUCCESS);
     } else if (strstr(line, MODEM_RESULT_CODE_ERROR)) {
         err = esp_modem_process_command_done(dce, MODEM_STATE_FAIL);
     } else if (!strncmp(line, "+CBC", strlen("+CBC"))) {
         /* store value of bcs, bcl, voltage */
-        uint32_t **cbc = sim800_dce->priv_resource;
+        uint32_t **cbc = ublox_dce->priv_resource;
         /* +CBC: <bcs>,<bcl>,<voltage> */
         sscanf(line, "%*s%d,%d,%d", cbc[0], cbc[1], cbc[2]);
         err = ESP_OK;
@@ -88,7 +88,7 @@ static esp_err_t sim800_handle_cbc(modem_dce_t *dce, const char *line)
 /**
  * @brief Handle response from +++
  */
-static esp_err_t sim800_handle_exit_data_mode(modem_dce_t *dce, const char *line)
+static esp_err_t ublox_handle_exit_data_mode(modem_dce_t *dce, const char *line)
 {
     esp_err_t err = ESP_FAIL;
     if (strstr(line, MODEM_RESULT_CODE_SUCCESS)) {
@@ -104,7 +104,7 @@ static esp_err_t sim800_handle_exit_data_mode(modem_dce_t *dce, const char *line
 /**
  * @brief Handle response from ATD*99#
  */
-static esp_err_t sim800_handle_atd_ppp(modem_dce_t *dce, const char *line)
+static esp_err_t ublox_handle_atd_ppp(modem_dce_t *dce, const char *line)
 {
     esp_err_t err = ESP_FAIL;
     if (strstr(line, MODEM_RESULT_CODE_CONNECT)) {
@@ -118,7 +118,7 @@ static esp_err_t sim800_handle_atd_ppp(modem_dce_t *dce, const char *line)
 /**
  * @brief Handle response from AT+CGMM
  */
-static esp_err_t sim800_handle_cgmm(modem_dce_t *dce, const char *line)
+static esp_err_t ublox_handle_cgmm(modem_dce_t *dce, const char *line)
 {
     esp_err_t err = ESP_FAIL;
     if (strstr(line, MODEM_RESULT_CODE_SUCCESS)) {
@@ -139,7 +139,7 @@ static esp_err_t sim800_handle_cgmm(modem_dce_t *dce, const char *line)
 /**
  * @brief Handle response from AT+CGSN
  */
-static esp_err_t sim800_handle_cgsn(modem_dce_t *dce, const char *line)
+static esp_err_t ublox_handle_cgsn(modem_dce_t *dce, const char *line)
 {
     esp_err_t err = ESP_FAIL;
     if (strstr(line, MODEM_RESULT_CODE_SUCCESS)) {
@@ -160,7 +160,7 @@ static esp_err_t sim800_handle_cgsn(modem_dce_t *dce, const char *line)
 /**
  * @brief Handle response from AT+CIMI
  */
-static esp_err_t sim800_handle_cimi(modem_dce_t *dce, const char *line)
+static esp_err_t ublox_handle_cimi(modem_dce_t *dce, const char *line)
 {
     esp_err_t err = ESP_FAIL;
     if (strstr(line, MODEM_RESULT_CODE_SUCCESS)) {
@@ -181,7 +181,7 @@ static esp_err_t sim800_handle_cimi(modem_dce_t *dce, const char *line)
 /**
  * @brief Handle response from AT+COPS?
  */
-static esp_err_t sim800_handle_cops(modem_dce_t *dce, const char *line)
+static esp_err_t ublox_handle_cops(modem_dce_t *dce, const char *line)
 {
     esp_err_t err = ESP_FAIL;
     if (strstr(line, MODEM_RESULT_CODE_SUCCESS)) {
@@ -222,7 +222,7 @@ static esp_err_t sim800_handle_cops(modem_dce_t *dce, const char *line)
 /**
  * @brief Handle response from AT+CPOWD=1
  */
-static esp_err_t sim800_handle_power_down(modem_dce_t *dce, const char *line)
+static esp_err_t ublox_handle_power_down(modem_dce_t *dce, const char *line)
 {
     esp_err_t err = ESP_FAIL;
     if (strstr(line, MODEM_RESULT_CODE_POWERDOWN)) {
@@ -241,13 +241,13 @@ static esp_err_t sim800_handle_power_down(modem_dce_t *dce, const char *line)
  *      - ESP_OK on success
  *      - ESP_FAIL on error
  */
-static esp_err_t sim800_get_signal_quality(modem_dce_t *dce, uint32_t *rssi, uint32_t *ber)
+static esp_err_t ublox_get_signal_quality(modem_dce_t *dce, uint32_t *rssi, uint32_t *ber)
 {
     modem_dte_t *dte = dce->dte;
-    sim800_modem_dce_t *sim800_dce = __containerof(dce, sim800_modem_dce_t, parent);
+    ublox_modem_dce_t *ublox_dce = __containerof(dce, ublox_modem_dce_t, parent);
     uint32_t *resource[2] = {rssi, ber};
-    sim800_dce->priv_resource = resource;
-    dce->handle_line = sim800_handle_csq;
+    ublox_dce->priv_resource = resource;
+    dce->handle_line = ublox_handle_csq;
     DCE_CHECK(dte->send_cmd(dte, "AT+CSQ\r", MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err);
     DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "inquire signal quality failed", err);
     ESP_LOGD(DCE_TAG, "inquire signal quality ok");
@@ -267,13 +267,13 @@ err:
  *      - ESP_OK on success
  *      - ESP_FAIL on error
  */
-static esp_err_t sim800_get_battery_status(modem_dce_t *dce, uint32_t *bcs, uint32_t *bcl, uint32_t *voltage)
+static esp_err_t ublox_get_battery_status(modem_dce_t *dce, uint32_t *bcs, uint32_t *bcl, uint32_t *voltage)
 {
     modem_dte_t *dte = dce->dte;
-    sim800_modem_dce_t *sim800_dce = __containerof(dce, sim800_modem_dce_t, parent);
+    ublox_modem_dce_t *ublox_dce = __containerof(dce, ublox_modem_dce_t, parent);
     uint32_t *resource[3] = {bcs, bcl, voltage};
-    sim800_dce->priv_resource = resource;
-    dce->handle_line = sim800_handle_cbc;
+    ublox_dce->priv_resource = resource;
+    dce->handle_line = ublox_handle_cbc;
     DCE_CHECK(dte->send_cmd(dte, "AT+CBC\r", MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err);
     DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "inquire battery status failed", err);
     ESP_LOGD(DCE_TAG, "inquire battery status ok");
@@ -291,12 +291,12 @@ err:
  *      - ESP_OK on success
  *      - ESP_FAIL on error
  */
-static esp_err_t sim800_set_working_mode(modem_dce_t *dce, modem_mode_t mode)
+static esp_err_t ublox_set_working_mode(modem_dce_t *dce, modem_mode_t mode)
 {
     modem_dte_t *dte = dce->dte;
     switch (mode) {
     case MODEM_COMMAND_MODE:
-        dce->handle_line = sim800_handle_exit_data_mode;
+        dce->handle_line = ublox_handle_exit_data_mode;
         vTaskDelay(pdMS_TO_TICKS(1000)); // spec: 1s delay for the modem to recognize the escape sequence
         if (dte->send_cmd(dte, "+++", MODEM_COMMAND_TIMEOUT_MODE_CHANGE) != ESP_OK) {
             // "+++" Could fail if we are already in the command mode.
@@ -312,13 +312,13 @@ static esp_err_t sim800_set_working_mode(modem_dce_t *dce, modem_mode_t mode)
         dce->mode = MODEM_COMMAND_MODE;
         break;
     case MODEM_PPP_MODE:
-        dce->handle_line = sim800_handle_atd_ppp;
+        dce->handle_line = ublox_handle_atd_ppp;
         DCE_CHECK(dte->send_cmd(dte, "ATD*99#\r", MODEM_COMMAND_TIMEOUT_MODE_CHANGE) == ESP_OK, "send command failed", err);
             if (dce->state != MODEM_STATE_SUCCESS) {
                 // Initiate PPP mode could fail, if we've already "dialed" the data call before.
                 // in that case we retry with "ATO" to just resume the data mode
                 ESP_LOGD(DCE_TAG, "enter ppp mode failed, retry with ATO");
-                dce->handle_line = sim800_handle_atd_ppp;
+                dce->handle_line = ublox_handle_atd_ppp;
                 DCE_CHECK(dte->send_cmd(dte, "ATO\r", MODEM_COMMAND_TIMEOUT_MODE_CHANGE) == ESP_OK, "send command failed", err);
                 DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "enter ppp mode failed", err);
             }
@@ -338,15 +338,15 @@ err:
 /**
  * @brief Power down
  *
- * @param sim800_dce sim800 object
+ * @param ublox_dce ublox object
  * @return esp_err_t
  *      - ESP_OK on success
  *      - ESP_FAIL on error
  */
-static esp_err_t sim800_power_down(modem_dce_t *dce)
+static esp_err_t ublox_power_down(modem_dce_t *dce)
 {
     modem_dte_t *dte = dce->dte;
-    dce->handle_line = sim800_handle_power_down;
+    dce->handle_line = ublox_handle_power_down;
     DCE_CHECK(dte->send_cmd(dte, "AT+CPOWD=1\r", MODEM_COMMAND_TIMEOUT_POWEROFF) == ESP_OK, "send command failed", err);
     DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "power down failed", err);
     ESP_LOGD(DCE_TAG, "power down ok");
@@ -358,17 +358,17 @@ err:
 /**
  * @brief Get DCE module name
  *
- * @param sim800_dce sim800 object
+ * @param ublox_dce uBlox object
  * @return esp_err_t
  *      - ESP_OK on success
  *      - ESP_FAIL on error
  */
-static esp_err_t sim800_get_module_name(sim800_modem_dce_t *sim800_dce)
+static esp_err_t ublox_get_module_name(ublox_modem_dce_t *ublox_dce)
 {
-    modem_dte_t *dte = sim800_dce->parent.dte;
-    sim800_dce->parent.handle_line = sim800_handle_cgmm;
+    modem_dte_t *dte = ublox_dce->parent.dte;
+    ublox_dce->parent.handle_line = ublox_handle_cgmm;
     DCE_CHECK(dte->send_cmd(dte, "AT+CGMM\r", MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err);
-    DCE_CHECK(sim800_dce->parent.state == MODEM_STATE_SUCCESS, "get module name failed", err);
+    DCE_CHECK(ublox_dce->parent.state == MODEM_STATE_SUCCESS, "get module name failed", err);
     ESP_LOGD(DCE_TAG, "get module name ok");
     return ESP_OK;
 err:
@@ -378,17 +378,17 @@ err:
 /**
  * @brief Get DCE module IMEI number
  *
- * @param sim800_dce sim800 object
+ * @param ublox_dce uBlox object
  * @return esp_err_t
  *      - ESP_OK on success
  *      - ESP_FAIL on error
  */
-static esp_err_t sim800_get_imei_number(sim800_modem_dce_t *sim800_dce)
+static esp_err_t ublox_get_imei_number(ublox_modem_dce_t *ublox_dce)
 {
-    modem_dte_t *dte = sim800_dce->parent.dte;
-    sim800_dce->parent.handle_line = sim800_handle_cgsn;
+    modem_dte_t *dte = ublox_dce->parent.dte;
+    ublox_dce->parent.handle_line = ublox_handle_cgsn;
     DCE_CHECK(dte->send_cmd(dte, "AT+CGSN\r", MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err);
-    DCE_CHECK(sim800_dce->parent.state == MODEM_STATE_SUCCESS, "get imei number failed", err);
+    DCE_CHECK(ublox_dce->parent.state == MODEM_STATE_SUCCESS, "get imei number failed", err);
     ESP_LOGD(DCE_TAG, "get imei number ok");
     return ESP_OK;
 err:
@@ -398,17 +398,17 @@ err:
 /**
  * @brief Get DCE module IMSI number
  *
- * @param sim800_dce sim800 object
+ * @param ublox_dce uBlox object
  * @return esp_err_t
  *      - ESP_OK on success
  *      - ESP_FAIL on error
  */
-static esp_err_t sim800_get_imsi_number(sim800_modem_dce_t *sim800_dce)
+static esp_err_t ublox_get_imsi_number(ublox_modem_dce_t *ublox_dce)
 {
-    modem_dte_t *dte = sim800_dce->parent.dte;
-    sim800_dce->parent.handle_line = sim800_handle_cimi;
+    modem_dte_t *dte = ublox_dce->parent.dte;
+    ublox_dce->parent.handle_line = ublox_handle_cimi;
     DCE_CHECK(dte->send_cmd(dte, "AT+CIMI\r", MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err);
-    DCE_CHECK(sim800_dce->parent.state == MODEM_STATE_SUCCESS, "get imsi number failed", err);
+    DCE_CHECK(ublox_dce->parent.state == MODEM_STATE_SUCCESS, "get imsi number failed", err);
     ESP_LOGD(DCE_TAG, "get imsi number ok");
     return ESP_OK;
 err:
@@ -423,13 +423,13 @@ err:
  *      - ESP_OK on success
  *      - ESP_FAIL on error
  */
-static esp_err_t sim800_get_operator_name(modem_dce_t *dce)
+static esp_err_t ublox_get_operator_name(modem_dce_t *dce)
 {
     modem_dte_t *dte = dce->dte;
-    sim800_modem_dce_t *sim800_dce = __containerof(dce, sim800_modem_dce_t, parent);
-    sim800_dce->parent.handle_line = sim800_handle_cops;
+    ublox_modem_dce_t *ublox_dce = __containerof(dce, ublox_modem_dce_t, parent);
+    ublox_dce->parent.handle_line = ublox_handle_cops;
     DCE_CHECK(dte->send_cmd(dte, "AT+COPS?\r", MODEM_COMMAND_TIMEOUT_OPERATOR) == ESP_OK, "send command failed", err);
-    DCE_CHECK(sim800_dce->parent.state == MODEM_STATE_SUCCESS, "get network operator failed", err);
+    DCE_CHECK(ublox_dce->parent.state == MODEM_STATE_SUCCESS, "get network operator failed", err);
     ESP_LOGD(DCE_TAG, "get network operator ok");
     return ESP_OK;
 err:
@@ -437,61 +437,61 @@ err:
 }
 
 /**
- * @brief Deinitialize SIM800 object
+ * @brief Deinitialize uBlox object
  *
  * @param dce Modem DCE object
  * @return esp_err_t
  *      - ESP_OK on success
  *      - ESP_FAIL on fail
  */
-static esp_err_t sim800_deinit(modem_dce_t *dce)
+static esp_err_t ublox_deinit(modem_dce_t *dce)
 {
-    sim800_modem_dce_t *sim800_dce = __containerof(dce, sim800_modem_dce_t, parent);
+    ublox_modem_dce_t *ublox_dce = __containerof(dce, ublox_modem_dce_t, parent);
     if (dce->dte) {
         dce->dte->dce = NULL;
     }
-    free(sim800_dce);
+    free(ublox_dce);
     return ESP_OK;
 }
 
-modem_dce_t *sim800_init(modem_dte_t *dte)
+modem_dce_t *ublox_init(modem_dte_t *dte)
 {
     DCE_CHECK(dte, "DCE should bind with a DTE", err);
-    /* malloc memory for sim800_dce object */
-    sim800_modem_dce_t *sim800_dce = calloc(1, sizeof(sim800_modem_dce_t));
-    DCE_CHECK(sim800_dce, "calloc sim800_dce failed", err);
+    /* malloc memory for ublox_dce object */
+    ublox_modem_dce_t *ublox_dce = calloc(1, sizeof(ublox_modem_dce_t));
+    DCE_CHECK(ublox_dce, "calloc ublox_dce failed", err);
     /* Bind DTE with DCE */
-    sim800_dce->parent.dte = dte;
-    dte->dce = &(sim800_dce->parent);
+    ublox_dce->parent.dte = dte;
+    dte->dce = &(ublox_dce->parent);
     /* Bind methods */
-    sim800_dce->parent.handle_line = NULL;
-    sim800_dce->parent.sync = esp_modem_dce_sync;
-    sim800_dce->parent.echo_mode = esp_modem_dce_echo;
-    sim800_dce->parent.store_profile = esp_modem_dce_store_profile;
-    sim800_dce->parent.set_flow_ctrl = esp_modem_dce_set_flow_ctrl;
-    sim800_dce->parent.define_pdp_context = esp_modem_dce_define_pdp_context;
-    sim800_dce->parent.hang_up = esp_modem_dce_hang_up;
-    sim800_dce->parent.get_signal_quality = sim800_get_signal_quality;
-    sim800_dce->parent.get_battery_status = sim800_get_battery_status;
-    sim800_dce->parent.get_operator_name = sim800_get_operator_name;
-    sim800_dce->parent.set_working_mode = sim800_set_working_mode;
-    sim800_dce->parent.power_down = sim800_power_down;
-    sim800_dce->parent.deinit = sim800_deinit;
+    ublox_dce->parent.handle_line = NULL;
+    ublox_dce->parent.sync = esp_modem_dce_sync;
+    ublox_dce->parent.echo_mode = esp_modem_dce_echo;
+    ublox_dce->parent.store_profile = esp_modem_dce_store_profile;
+    ublox_dce->parent.set_flow_ctrl = esp_modem_dce_set_flow_ctrl;
+    ublox_dce->parent.define_pdp_context = esp_modem_dce_define_pdp_context;
+    ublox_dce->parent.hang_up = esp_modem_dce_hang_up;
+    ublox_dce->parent.get_signal_quality = ublox_get_signal_quality;
+    ublox_dce->parent.get_battery_status = ublox_get_battery_status;
+    ublox_dce->parent.get_operator_name = ublox_get_operator_name;
+    ublox_dce->parent.set_working_mode = ublox_set_working_mode;
+    ublox_dce->parent.power_down = ublox_power_down;
+    ublox_dce->parent.deinit = ublox_deinit;
     /* Sync between DTE and DCE */
-    DCE_CHECK(esp_modem_dce_sync(&(sim800_dce->parent)) == ESP_OK, "sync failed", err_io);
+    DCE_CHECK(esp_modem_dce_sync(&(ublox_dce->parent)) == ESP_OK, "sync failed", err_io);
     /* Close echo */
-    DCE_CHECK(esp_modem_dce_echo(&(sim800_dce->parent), false) == ESP_OK, "close echo mode failed", err_io);
+    DCE_CHECK(esp_modem_dce_echo(&(ublox_dce->parent), false) == ESP_OK, "close echo mode failed", err_io);
     /* Get Module name */
-    DCE_CHECK(sim800_get_module_name(sim800_dce) == ESP_OK, "get module name failed", err_io);
+    DCE_CHECK(ublox_get_module_name(ublox_dce) == ESP_OK, "get module name failed", err_io);
     /* Get IMEI number */
-    DCE_CHECK(sim800_get_imei_number(sim800_dce) == ESP_OK, "get imei failed", err_io);
+    DCE_CHECK(ublox_get_imei_number(ublox_dce) == ESP_OK, "get imei failed", err_io);
     /* Get IMSI number */
-    DCE_CHECK(sim800_get_imsi_number(sim800_dce) == ESP_OK, "get imsi failed", err_io);
+    DCE_CHECK(ublox_get_imsi_number(ublox_dce) == ESP_OK, "get imsi failed", err_io);
     /* Get operator name */
-    DCE_CHECK(sim800_get_operator_name(&(sim800_dce->parent)) == ESP_OK, "get operator name failed", err_io);
-    return &(sim800_dce->parent);
+    DCE_CHECK(ublox_get_operator_name(&(ublox_dce->parent)) == ESP_OK, "get operator name failed", err_io);
+    return &(ublox_dce->parent);
 err_io:
-    free(sim800_dce);
+    free(ublox_dce);
 err:
     return NULL;
 }

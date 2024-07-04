@@ -104,17 +104,6 @@ esp_err_t esp_modem_dce_store_profile(modem_dce_t *dce);
 esp_err_t esp_modem_dce_set_flow_ctrl(modem_dce_t *dce, modem_flow_ctrl_t flow_ctrl);
 
 /**
- * @brief Setup CMUX mode of DCE
- *
- * @param dce Modem DCE object
- * @param flow_ctrl flow control mode
- * @return esp_err_t
- *      - ESP_OK on success
- *      - ESP_FAIL on error
- */
-esp_err_t esp_modem_dce_setup_cmux(modem_dce_t *dce);
-
-/**
  * @brief Define PDP context
  *
  * @param dce Modem DCE object
@@ -126,6 +115,20 @@ esp_err_t esp_modem_dce_setup_cmux(modem_dce_t *dce);
  *      - ESP_FAIL on error
  */
 esp_err_t esp_modem_dce_define_pdp_context(modem_dce_t *dce, uint32_t cid, const char *type, const char *apn);
+
+/**
+ * @brief Set PDP authentication type
+ *
+ * @param dce Modem DCE object
+ * @param cid PDP context identifier
+ * @param auth_type Authentication type
+ * @param user Access point username
+ * @param passwd Access point password
+ * @return esp_err_t
+ *      - ESP_OK on success
+ *      - ESP_FAIL on error
+ */
+esp_err_t esp_modem_dce_set_pdp_authentication_type(modem_dce_t *dce, uint32_t cid, uint32_t auth_type, const char *user, const char *passwd);
 
 /**
  * @brief Hang up

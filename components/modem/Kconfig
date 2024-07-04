@@ -1,15 +1,9 @@
-menu "ESP-LTE-MODEM"
+menu "ESP-MODEM"
 
-    config COMPONENT_MODEM_APN
+    config EXAMPLE_COMPONENT_MODEM_APN
         string "Set Access Point Name (APN)"
-        default "CMNET"
+        default "internet"
         help
             Logical name which is used to select the GGSN or the external packet data network.
-
-    config COMPONENT_MODEM_PIN
-        string "Set Personal identification number (PIN)"
-        default ""
-        help
-            PIN which is used to unlock the SIM card.
 
 endmenu

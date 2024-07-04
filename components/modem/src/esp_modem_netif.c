@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "esp_netif.h"
+#include "esp_netif_ppp.h"
 #include "esp_modem.h"
 #include "esp_log.h"
+
+#define MODEM_DEBUG_OUTPUT 0
 
 static const char *TAG = "esp-modem-netif";
 
@@ -25,6 +28,16 @@ typedef struct esp_modem_netif_driver_s {
     modem_dte_t            *dte;        /*!< ptr to the esp_modem objects (DTE) */
 } esp_modem_netif_driver_t;
 
+static void on_ppp_changed(void *arg, esp_event_base_t event_base,
+                           int32_t event_id, void *event_data)
+{
+    modem_dte_t *dte = arg;
+    if (event_id < NETIF_PP_PHASE_OFFSET) {
+        ESP_LOGI(TAG, "PPP state changed event %d", event_id);
+        // only notify the modem on state/error events, ignoring phase transitions
+        esp_modem_notify_ppp_netif_closed(dte);
+    }
+}
 /**
  * @brief Transmit function called from esp_netif to output network stack data
  *
@@ -39,7 +52,13 @@ typedef struct esp_modem_netif_driver_s {
 static esp_err_t esp_modem_dte_transmit(void *h, void *buffer, size_t len)
 {
     modem_dte_t *dte = h;
+#if MODEM_DEBUG_OUTPUT
+    //ESP_LOGI("Data transmit", "Size:%zu, Data: %.*s", len, len, (const char*)buffer);
+    //ESP_LOG_BUFFER_HEX("Data transmit hexdump",  buffer, len);
+    ESP_LOG_BUFFER_HEXDUMP("Data transmit hexdump", buffer, len, ESP_LOG_INFO);
+#endif
     if (dte->send_data(dte, (const char *)buffer, len) > 0) {
+        vTaskDelay(pdMS_TO_TICKS(1));
         return ESP_OK;
     }
     return ESP_FAIL;
@@ -66,8 +85,16 @@ static esp_err_t esp_modem_post_attach_start(esp_netif_t * esp_netif, void * arg
     };
     driver->base.netif = esp_netif;
     ESP_ERROR_CHECK(esp_netif_set_driver_config(esp_netif, &driver_ifconfig));
-    esp_modem_start_ppp(dte);
-    return ESP_OK;
+
+    // enable both events, so we could notify the modem layer if an error occurred/state changed
+    esp_netif_ppp_config_t ppp_config = {
+            .ppp_error_event_enabled = true,
+            .ppp_phase_event_enabled = true
+    };
+    esp_netif_ppp_set_params(esp_netif, &ppp_config);
+
+    ESP_ERROR_CHECK(esp_event_handler_register(NETIF_PPP_STATUS, ESP_EVENT_ANY_ID, &on_ppp_changed, dte));
+    return esp_modem_start_ppp(dte);
 }
 
 /**
@@ -83,6 +110,9 @@ static esp_err_t modem_netif_receive_cb(void *buffer, size_t len, void *context)
 {
     esp_modem_netif_driver_t *driver = context;
     esp_netif_receive(driver->base.netif, buffer, len, NULL);
+#if MODEM_DEBUG_OUTPUT
+    ESP_LOGI("Data receive", "%s", (const char*)buffer);
+#endif
     return ESP_OK;
 }
 

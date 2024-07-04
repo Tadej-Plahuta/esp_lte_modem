@@ -30,25 +30,6 @@ static const char *DCE_TAG = "dce_service";
         }                                                                             \
     } while (0)
 
-/**
- * @brief Handle response from ATD*99#
- */
-esp_err_t esp_modem_dce_handle_cmux_sabm(modem_dce_t *dce, const char *frame)
-{
-    esp_err_t err = ESP_FAIL;
-    if (frame[2] == (FT_UA | PF))
-    {
-      err = esp_modem_process_command_done(dce, MODEM_STATE_SUCCESS);
-      ESP_LOGD(DCE_TAG, "CMUX SABM success");
-    }
-    else
-    {
-      err = esp_modem_process_command_done(dce, MODEM_STATE_FAIL);
-      ESP_LOGE(DCE_TAG, "CMUX SABM failed");
-    }
-    return err;
-}
-
 esp_err_t esp_modem_dce_handle_response_default(modem_dce_t *dce, const char *line)
 {
     esp_err_t err = ESP_FAIL;
@@ -94,7 +75,7 @@ esp_err_t esp_modem_dce_store_profile(modem_dce_t *dce)
 {
     modem_dte_t *dte = dce->dte;
     dce->handle_line = esp_modem_dce_handle_response_default;
-    DCE_CHECK(dte->send_cmd(dte, "AT&W\r", MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err);
+    DCE_CHECK(dte->send_cmd(dte, "AT&W\r", MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err); // popravljen timeout
     DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "save settings failed", err);
     ESP_LOGD(DCE_TAG, "save settings ok");
     return ESP_OK;
@@ -117,23 +98,6 @@ err:
     return ESP_FAIL;
 }
 
-esp_err_t esp_modem_dce_setup_cmux(modem_dce_t *dce)
-{
-    modem_dte_t *dte = dce->dte;
-    for (uint8_t i = 0; i < 3; i++)
-    {
-      dce->handle_cmux_frame = esp_modem_dce_handle_cmux_sabm;
-      DCE_CHECK(dte->send_sabm(dte, i, MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err);
-      vTaskDelay(100 / portTICK_PERIOD_MS); // Waiting before open next DLC
-    }
-
-    dte->send_cmd = dte->send_cmux_cmd;
-    dte->send_data = dte->send_cmux_data;
-    return ESP_OK;
-err:
-    return ESP_FAIL;
-}
-
 esp_err_t esp_modem_dce_define_pdp_context(modem_dce_t *dce, uint32_t cid, const char *type, const char *apn)
 {
     modem_dte_t *dte = dce->dte;
@@ -144,6 +108,41 @@ esp_err_t esp_modem_dce_define_pdp_context(modem_dce_t *dce, uint32_t cid, const
     DCE_CHECK(dte->send_cmd(dte, command, MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err);
     DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "define pdp context failed", err);
     ESP_LOGD(DCE_TAG, "define pdp context ok");
+    return ESP_OK;
+err:
+    return ESP_FAIL;
+}
+
+esp_err_t esp_modem_dce_set_pdp_authentication_type(modem_dce_t *dce, uint32_t cid, uint32_t auth_type, const char *user, const char *passwd)
+{
+    modem_dte_t *dte = dce->dte;
+    char command[64];
+    int len;
+
+    if(auth_type == 1)
+    {
+        len = snprintf(command, sizeof(command), "AT+CGAUTH=%d,%d,\"%s\",\"%s\"\r", cid, auth_type, passwd, user);
+    }
+    else if(auth_type == 2 || auth_type == 3)
+    {
+        len = snprintf(command, sizeof(command), "AT+CGAUTH=%d,%d,\"%s\",\"%s\"\r", cid, auth_type, passwd, user);
+        // int len = snprintf(command, sizeof(command), "AT+CGAUTH=%d,%d,\"%s\"\r", cid, auth_type, passwd);
+    }
+    else if(auth_type == 0)
+    {
+        len = snprintf(command, sizeof(command), "AT+CGAUTH=%d,%d\r", cid, auth_type);
+    }
+    else
+    {
+        ESP_LOGE(DCE_TAG, "Invalid auth_type number!");
+        return ESP_FAIL;
+    }
+
+    DCE_CHECK(len < sizeof(command), "command too long: %s", err, command);
+    dce->handle_line = esp_modem_dce_handle_response_default;
+    DCE_CHECK(dte->send_cmd(dte, command, MODEM_COMMAND_TIMEOUT_DEFAULT) == ESP_OK, "send command failed", err);
+    DCE_CHECK(dce->state == MODEM_STATE_SUCCESS, "set pdp authentication type failed", err);
+    ESP_LOGD(DCE_TAG, "set pdp authentication type ok");
     return ESP_OK;
 err:
     return ESP_FAIL;
